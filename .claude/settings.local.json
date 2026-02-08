@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create:*)",
+      "Bash(npm install:*)",
+      "Bash(pip install:*)",
+      "Bash(npm run build:*)",
+      "Bash(python -c:*)",
+      "Bash(python:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(git -C \"d:/TurboClip\" log --oneline -20)"
+    ]
+  }
+}

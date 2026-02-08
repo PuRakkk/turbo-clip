@@ -17,10 +17,16 @@ class UserLogin(BaseModel):
 class UserResponse(UserBase):
     id: str
     is_active: bool
+    is_premium: bool = False
+    is_admin: bool = False
+    download_path: Optional[str] = None
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+class UserSettings(BaseModel):
+    download_path: Optional[str] = None
 
 class VideoFormat(BaseModel):
     format_code: str
@@ -32,10 +38,15 @@ class VideoMetadata(BaseModel):
     video_id: str
     title: str
     duration: float
-    thumnail: Optional[str] = None
+    thumbnail: Optional[str] = None
     uploader: Optional[str] = None
     upload_date: Optional[str] = None
-    availale_formats: List[VideoFormat] = []
+    available_formats: List[VideoFormat] = []
+
+class TikTokInfoRequest(BaseModel):
+    url: HttpUrl
+    limit: int = 30
+    offset: int = 0
 
 class DownloadRequest(BaseModel):
     url: HttpUrl
@@ -76,3 +87,13 @@ class SubscriptionPlan(BaseModel):
     tier: str
     price: float
     features: dict
+
+class BatchInfoRequest(BaseModel):
+    url: str
+    limit: int = 30
+    offset: int = 0
+
+class BatchDownloadRequest(BaseModel):
+    video_urls: List[str]
+    format: str = "mp4"
+    quality: str = "720p"

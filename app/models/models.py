@@ -15,15 +15,18 @@ class User(Base):
 
     id = Column(String, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
-    username = Column(String, unique=True, index=True, nullable=False)
+    username = Column(String, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
+    is_premium = Column(Boolean, default=False)
+    is_admin = Column(Boolean, default=False)
+    download_path = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     #relations
-    subscription = relationship("Subscription", back_populates="users", cascade="all, delete-orhan")
-    downloadhistory = relationship("DownloadHistory", back_populates="users", cascade="all, delete-orphan")
+    subscription = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
+    download_history = relationship("DownloadHistory", back_populates="user", cascade="all, delete-orphan")
 
 class Subscription(Base):
     __tablename__ = "subscriptions"
@@ -44,7 +47,7 @@ class Subscription(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    user = relationship("User", back_populates="subscriptions")
+    user = relationship("User", back_populates="subscription")
 
 class DownloadHistory(Base):
     __tablename__ = "download_history"
@@ -56,8 +59,10 @@ class DownloadHistory(Base):
     video_id = Column(String, nullable=False, index=True)
     format = Column(String, default="mp4")
     quality = Column(String, default="720p")
+    file_path = Column(String, nullable=True)
     file_size = Column(Float, nullable=True)
     duration = Column(Float, nullable=True)
+    ip_address = Column(String, nullable=True, index=True)
     downloaded_at = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
 
