@@ -8,7 +8,9 @@
       "Bash(python -c:*)",
       "Bash(python:*)",
       "WebFetch(domain:github.com)",
-      "Bash(git -C \"d:/TurboClip\" log --oneline -20)"
+      "Bash(git -C \"d:/TurboClip\" log --oneline -20)",
+      "Bash(node -e:*)",
+      "Bash(npx vite build:*)"
     ]
   }
 }

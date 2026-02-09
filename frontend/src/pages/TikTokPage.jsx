@@ -48,6 +48,7 @@ export default function TikTokPage() {
 
   // Batch (profile) state
   const [profileVideos, setProfileVideos] = useState([]);
+  const [selectedIds, setSelectedIds] = useState(new Set());
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [batchDownloading, setBatchDownloading] = useState(false);
@@ -56,6 +57,7 @@ export default function TikTokPage() {
 
   const eventSourceRef = useRef(null);
   const activeDownloadId = useRef(null);
+  const deliveredIdsRef = useRef(new Set());
 
   useEffect(() => {
     return () => {
@@ -67,6 +69,7 @@ export default function TikTokPage() {
     setVideoInfo(null);
     setSlideshowInfo(null);
     setProfileVideos([]);
+    setSelectedIds(new Set());
     setHasMore(false);
     setMessage(null);
     setProgress(null);
@@ -90,6 +93,7 @@ export default function TikTokPage() {
           else if (infoRes.data.type === 'video') setVideoInfo(infoRes.data.info);
         } else {
           setProfileVideos(res.data.videos);
+          setSelectedIds(new Set(res.data.videos.map((v) => v.video_id)));
           setHasMore(res.data.has_more);
         }
       } else if (res.data.type === 'slideshow') {
@@ -109,7 +113,13 @@ export default function TikTokPage() {
     try {
       const res = await api.post('/tiktok/info', { url, limit: videoLimit, offset: profileVideos.length });
       if (res.data.type === 'profile') {
-        setProfileVideos((prev) => [...prev, ...res.data.videos]);
+        const newVideos = res.data.videos;
+        setProfileVideos((prev) => [...prev, ...newVideos]);
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          newVideos.forEach((v) => next.add(v.video_id));
+          return next;
+        });
         setHasMore(res.data.has_more);
       }
     } catch (err) {
@@ -245,12 +255,25 @@ export default function TikTokPage() {
   // --- Batch progress (SSE) ---
   function connectToBatchProgress(batchId) {
     if (eventSourceRef.current) eventSourceRef.current.close();
+    deliveredIdsRef.current = new Set();
+
     const es = new EventSource(`/api/tiktok/batch/progress/${batchId}`);
     eventSourceRef.current = es;
 
     es.onmessage = (event) => {
       const data = JSON.parse(event.data);
       setBatchProgress(data);
+
+      // Deliver each completed file to the user's browser as it finishes
+      const downloads = data.completed_downloads || [];
+      for (const dl of downloads) {
+        if (dl.download_id && !deliveredIdsRef.current.has(dl.download_id)) {
+          deliveredIdsRef.current.add(dl.download_id);
+          smartDownload(dl.download_id, dl.title).catch((err) =>
+            console.warn('Batch smartDownload failed:', dl.title, err)
+          );
+        }
+      }
 
       if (data.status === 'done' || data.status === 'error') {
         es.close();
@@ -267,13 +290,35 @@ export default function TikTokPage() {
     };
   }
 
+  function toggleSelect(videoId) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(videoId)) next.delete(videoId);
+      else next.add(videoId);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(profileVideos.map((v) => v.video_id)));
+  }
+
+  function deselectAll() {
+    setSelectedIds(new Set());
+  }
+
+  const selectedCount = selectedIds.size;
+
   async function handleDownloadAll() {
+    const selected = profileVideos.filter((v) => selectedIds.has(v.video_id));
+    if (selected.length === 0) return;
+
     setBatchDownloading(true);
     setError('');
-    setBatchProgress({ status: 'waiting', total: profileVideos.length, completed: 0 });
+    setBatchProgress({ status: 'waiting', total: selected.length, completed: 0 });
 
     try {
-      const videoUrls = profileVideos.map((v) => v.url);
+      const videoUrls = selected.map((v) => v.url);
       const res = await api.post('/tiktok/batch/download', { video_urls: videoUrls });
       activeDownloadId.current = res.data.batch_id;
       connectToBatchProgress(res.data.batch_id);
@@ -435,7 +480,14 @@ export default function TikTokPage() {
       {profileVideos.length > 0 && (
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-2">
-            <h2 className="text-base sm:text-lg font-semibold">Found {profileVideos.length} videos{hasMore ? '+' : ''}</h2>
+            <h2 className="text-base sm:text-lg font-semibold">
+              Found {profileVideos.length} videos{hasMore ? '+' : ''}
+              {selectedCount < profileVideos.length && (
+                <span className="text-sm font-normal text-gray-400 ml-2">
+                  ({selectedCount} selected)
+                </span>
+              )}
+            </h2>
             <div className="flex items-center gap-2 text-sm shrink-0">
               <span className="text-gray-400 hidden sm:inline">Load per page:</span>
               <select
@@ -450,27 +502,59 @@ export default function TikTokPage() {
             </div>
           </div>
 
+          {/* Select / Deselect controls */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={selectAll}
+              disabled={selectedCount === profileVideos.length}
+              className="bg-gray-800 hover:bg-gray-700 disabled:opacity-40 border border-gray-700 text-white text-xs px-3 py-1.5 rounded-lg transition"
+            >
+              Select All
+            </button>
+            <button
+              onClick={deselectAll}
+              disabled={selectedCount === 0}
+              className="bg-gray-800 hover:bg-gray-700 disabled:opacity-40 border border-gray-700 text-white text-xs px-3 py-1.5 rounded-lg transition"
+            >
+              Deselect All
+            </button>
+            <span className="text-xs text-gray-500 ml-auto">
+              Click thumbnails to toggle selection
+            </span>
+          </div>
+
           <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 max-h-96 overflow-y-auto">
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 sm:gap-3">
-              {profileVideos.map((v) => (
-                <div key={v.video_id} className="group">
-                  <div className="relative aspect-9/16 rounded-lg overflow-hidden bg-gray-800">
-                    {v.thumbnail ? (
-                      <img src={v.thumbnail} alt={v.title} loading="lazy" className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">
-                        No thumbnail
+              {profileVideos.map((v) => {
+                const isSelected = selectedIds.has(v.video_id);
+                return (
+                  <div
+                    key={v.video_id}
+                    className="group cursor-pointer"
+                    onClick={() => toggleSelect(v.video_id)}
+                  >
+                    <div className={`relative aspect-9/16 rounded-lg overflow-hidden bg-gray-800 ring-2 transition ${isSelected ? 'ring-cyan-500' : 'ring-transparent opacity-50'}`}>
+                      {v.thumbnail ? (
+                        <img src={v.thumbnail} alt={v.title} loading="lazy" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">
+                          No thumbnail
+                        </div>
+                      )}
+                      {/* Checkbox indicator */}
+                      <div className={`absolute top-1.5 left-1.5 w-5 h-5 rounded flex items-center justify-center text-xs font-bold transition ${isSelected ? 'bg-cyan-500 text-white' : 'bg-black/60 text-gray-400 border border-gray-500'}`}>
+                        {isSelected ? '\u2713' : ''}
                       </div>
-                    )}
-                    {v.duration && (
-                      <span className="absolute bottom-1 right-1 bg-black/80 text-white text-xs px-1.5 py-0.5 rounded">
-                        {v.duration}s
-                      </span>
-                    )}
+                      {v.duration && (
+                        <span className="absolute bottom-1 right-1 bg-black/80 text-white text-xs px-1.5 py-0.5 rounded">
+                          {v.duration}s
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1 line-clamp-2">{v.title}</p>
                   </div>
-                  <p className="text-xs text-gray-400 mt-1 line-clamp-2">{v.title}</p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -486,10 +570,14 @@ export default function TikTokPage() {
 
           <button
             onClick={handleDownloadAll}
-            disabled={batchDownloading}
+            disabled={batchDownloading || selectedCount === 0}
             className="w-full bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-800 text-white py-3 rounded-lg font-semibold transition"
           >
-            {batchDownloading ? 'Downloading...' : `Download All ${profileVideos.length} Videos`}
+            {batchDownloading
+              ? 'Downloading...'
+              : selectedCount === profileVideos.length
+                ? `Download All ${profileVideos.length} Videos`
+                : `Download ${selectedCount} of ${profileVideos.length} Videos`}
           </button>
         </div>
       )}

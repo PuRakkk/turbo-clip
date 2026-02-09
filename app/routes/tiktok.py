@@ -31,6 +31,17 @@ def _check_premium(db: Session, user_id: str):
         )
 
 
+def _get_user_download_dir(db: Session, user_id: str) -> str:
+    """Return the user's custom download path if set, otherwise the default."""
+    import os
+    from app.settings.config import settings
+    user = db.query(User).filter(User.id == user_id).first()
+    if user and user.download_path and os.path.isabs(user.download_path):
+        os.makedirs(user.download_path, exist_ok=True)
+        return user.download_path
+    return settings.DOWNLOAD_DIR
+
+
 # --- Smart unified info endpoint ---
 
 @router.post("/info")
@@ -104,8 +115,9 @@ def _run_tiktok_video_download(download_id: str, url: str, user_id: str):
         })
 
         callback = _make_tiktok_progress_callback(download_id)
+        user_dir = _get_user_download_dir(db, user_id)
         result = tiktok_service.download_video(
-            url=url, progress_callback=callback,
+            url=url, progress_callback=callback, download_dir=user_dir,
         )
 
         history = DownloadHistory(
@@ -157,8 +169,9 @@ def _run_tiktok_audio_download(download_id: str, url: str, user_id: str):
                     "phase": "converting", "speed": None, "eta": None,
                 })
 
+        user_dir = _get_user_download_dir(db, user_id)
         result = tiktok_service.download_audio_only(
-            url=url, format="mp3", progress_callback=audio_callback,
+            url=url, format="mp3", progress_callback=audio_callback, download_dir=user_dir,
         )
 
         history = DownloadHistory(
@@ -214,8 +227,9 @@ def _run_tiktok_slideshow_download(download_id: str, url: str, user_id: str):
                     "speed": None, "eta": None,
                 })
 
+        user_dir = _get_user_download_dir(db, user_id)
         result = tiktok_service.download_slideshow(
-            url=url, progress_callback=slideshow_callback,
+            url=url, progress_callback=slideshow_callback, download_dir=user_dir,
         )
 
         history = DownloadHistory(
@@ -245,11 +259,15 @@ def _run_tiktok_batch_download(batch_id: str, video_urls: list, user_id: str):
     db = SessionLocal()
     total = len(video_urls)
     failed = []
+    completed_downloads = []
 
     progress_store.update(batch_id, {
         "status": "downloading", "total": total, "completed": 0,
         "current_title": "", "current_progress": 0, "failed": [],
+        "completed_downloads": [],
     })
+
+    user_dir = _get_user_download_dir(db, user_id)
 
     try:
         for i, url in enumerate(video_urls):
@@ -282,14 +300,19 @@ def _run_tiktok_batch_download(batch_id: str, video_urls: list, user_id: str):
 
                 if is_slideshow:
                     result = tiktok_service.download_slideshow(
-                        url=url, progress_callback=make_video_callback(i),
+                        url=url, progress_callback=make_video_callback(i), download_dir=user_dir,
                     )
                     fmt, quality_val = 'zip', 'slideshow'
                 else:
                     result = tiktok_service.download_video(
-                        url=url, progress_callback=make_video_callback(i),
+                        url=url, progress_callback=make_video_callback(i), download_dir=user_dir,
                     )
                     fmt, quality_val = 'mp4', 'best'
+
+                completed_downloads.append({
+                    "download_id": result['download_id'],
+                    "title": result.get('title', ''),
+                })
 
                 history = DownloadHistory(
                     id=result['download_id'], user_id=user_id,
@@ -309,11 +332,13 @@ def _run_tiktok_batch_download(batch_id: str, video_urls: list, user_id: str):
             progress_store.update(batch_id, {
                 "status": "downloading", "total": total, "completed": i + 1,
                 "current_title": "", "current_progress": 0, "failed": failed,
+                "completed_downloads": completed_downloads,
             })
 
         progress_store.update(batch_id, {
             "status": "done", "total": total,
             "completed": total - len(failed), "failed": failed,
+            "completed_downloads": completed_downloads,
         })
 
     except Exception as e:
@@ -474,6 +499,7 @@ async def tiktok_batch_progress(batch_id: str):
                     "current_title": data.get("current_title", ""),
                     "current_progress": data.get("current_progress", 0),
                     "failed": data.get("failed", []),
+                    "completed_downloads": data.get("completed_downloads", []),
                 }
                 if data.get("status") in ("done", "error"):
                     if data.get("error"):

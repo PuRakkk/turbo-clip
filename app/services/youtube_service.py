@@ -27,6 +27,12 @@ class YouTubeService:
         elif shutil.which('ffmpeg'):
             self.ffmpeg_dir = os.path.dirname(shutil.which('ffmpeg'))
 
+        if not self.ffmpeg_dir:
+            logger.warning(
+                "FFmpeg not found! Video+audio stream merging will fail. "
+                "Set FFMPEG_PATH in .env or install ffmpeg to your system PATH."
+            )
+
     def get_video_info(self, url: str) -> Dict:
         # Check cache first
         cached = _info_cache.get(url)
@@ -139,10 +145,28 @@ class YouTubeService:
                     f"ffmpeg_dir={self.ffmpeg_dir}"
                 )
 
+            # Verify the merged file has both video and audio streams
+            streams = self._verify_merged_streams(downloaded_file)
+            if not streams['has_video'] or not streams['has_audio']:
+                logger.warning(
+                    "Merged file missing streams (video=%s, audio=%s). Attempting fallback merge.",
+                    streams['has_video'], streams['has_audio']
+                )
+                fallback = self._merge_streams_fallback(target_dir, download_id, format)
+                if fallback:
+                    downloaded_file = fallback
+                    streams = self._verify_merged_streams(downloaded_file)
+                    if not streams['has_video'] or not streams['has_audio']:
+                        logger.error("Fallback merge still missing streams: %s", streams)
+                else:
+                    logger.error("Fallback merge failed — serving file as-is")
+
             # If MP4, verify the video codec is compatible (not VP9/AV1).
-            # Re-encode to H.264 if needed — fast for short videos, rare for long ones.
             if format == 'mp4':
                 downloaded_file = self._ensure_mp4_h264(downloaded_file)
+
+            # Clean up leftover intermediate stream files
+            self._cleanup_intermediate_files(target_dir, download_id, downloaded_file)
 
             # Rename from UUID to video title
             downloaded_file = self._rename_to_title(downloaded_file, info.get('title'))
@@ -261,6 +285,123 @@ class YouTubeService:
                 return info.get('extractor_key', '').lower() in ['youtube', 'youtubetab']
         except:
             return False
+
+    def _verify_merged_streams(self, file_path: str) -> dict:
+        """Verify the output file has both video and audio streams using ffprobe."""
+        import subprocess
+
+        ffprobe = 'ffprobe'
+        if self.ffmpeg_dir:
+            ffprobe_path = os.path.join(self.ffmpeg_dir, 'ffprobe')
+            if os.path.exists(ffprobe_path) or os.path.exists(ffprobe_path + '.exe'):
+                ffprobe = ffprobe_path
+
+        result = {"has_video": False, "has_audio": False, "video_codec": None, "audio_codec": None}
+        try:
+            proc = subprocess.run(
+                [ffprobe, '-v', 'quiet', '-show_streams', '-of', 'json', file_path],
+                capture_output=True, text=True, timeout=15
+            )
+            if proc.returncode != 0:
+                logger.warning("ffprobe failed for %s: %s", file_path, proc.stderr)
+                return result
+
+            import json
+            data = json.loads(proc.stdout)
+            for stream in data.get('streams', []):
+                if stream.get('codec_type') == 'video':
+                    result['has_video'] = True
+                    result['video_codec'] = stream.get('codec_name')
+                elif stream.get('codec_type') == 'audio':
+                    result['has_audio'] = True
+                    result['audio_codec'] = stream.get('codec_name')
+
+            logger.info(
+                "Stream verify for %s: video=%s(%s) audio=%s(%s)",
+                os.path.basename(file_path),
+                result['has_video'], result['video_codec'],
+                result['has_audio'], result['audio_codec'],
+            )
+        except Exception as e:
+            logger.warning("Stream verification failed: %s", e)
+
+        return result
+
+    def _merge_streams_fallback(self, target_dir: str, download_id: str, format: str) -> Optional[str]:
+        """Manually merge separate video+audio files if yt-dlp's auto-merge failed."""
+        import subprocess
+
+        ffmpeg_bin = 'ffmpeg'
+        if self.ffmpeg_dir:
+            candidate = os.path.join(self.ffmpeg_dir, 'ffmpeg')
+            if os.path.exists(candidate) or os.path.exists(candidate + '.exe'):
+                ffmpeg_bin = candidate
+
+        # Find separate stream files: {download_id}.f{N}.{ext}
+        video_file = None
+        audio_file = None
+        for f in os.listdir(target_dir):
+            if not f.startswith(download_id) or f.endswith('.part'):
+                continue
+            path = os.path.join(target_dir, f)
+            parts = f[len(download_id):]  # e.g. ".f137.webm"
+            if parts.count('.') <= 1:
+                continue  # This is the final merged file, skip it
+            # Probe this file to check if it's video or audio
+            try:
+                proc = subprocess.run(
+                    [ffmpeg_bin.replace('ffmpeg', 'ffprobe'), '-v', 'quiet',
+                     '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', path],
+                    capture_output=True, text=True, timeout=10
+                )
+                types = proc.stdout.strip().split('\n')
+                if 'video' in types and not video_file:
+                    video_file = path
+                elif 'audio' in types and not audio_file:
+                    audio_file = path
+            except Exception:
+                # Guess by extension
+                ext_lower = os.path.splitext(f)[1].lower()
+                if ext_lower in ('.m4a', '.ogg', '.opus', '.weba') and not audio_file:
+                    audio_file = path
+                elif ext_lower in ('.mp4', '.webm', '.mkv') and not video_file:
+                    video_file = path
+
+        if not video_file or not audio_file:
+            logger.warning("Fallback merge: could not find both streams (video=%s, audio=%s)", video_file, audio_file)
+            return None
+
+        merged_path = os.path.join(target_dir, f'{download_id}.{format}')
+        logger.info("Fallback merge: %s + %s -> %s", os.path.basename(video_file), os.path.basename(audio_file), os.path.basename(merged_path))
+
+        codec_args = ['-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k'] if format == 'mp4' else ['-c', 'copy']
+
+        try:
+            subprocess.run(
+                [ffmpeg_bin, '-i', video_file, '-i', audio_file] + codec_args + ['-y', merged_path],
+                capture_output=True, timeout=600
+            )
+            if os.path.exists(merged_path) and os.path.getsize(merged_path) > 0:
+                logger.info("Fallback merge succeeded: %s", os.path.basename(merged_path))
+                return merged_path
+            else:
+                logger.error("Fallback merge produced empty file")
+                return None
+        except Exception as e:
+            logger.error("Fallback merge failed: %s", e)
+            return None
+
+    def _cleanup_intermediate_files(self, target_dir: str, download_id: str, final_file: str):
+        """Remove leftover intermediate stream files (e.g. .f137.webm, .f140.m4a)."""
+        final_basename = os.path.basename(final_file)
+        for f in os.listdir(target_dir):
+            if f.startswith(download_id) and f != final_basename:
+                path = os.path.join(target_dir, f)
+                try:
+                    os.remove(path)
+                    logger.info("Cleaned up intermediate file: %s", f)
+                except OSError as e:
+                    logger.warning("Failed to clean up %s: %s", f, e)
 
     def _ensure_mp4_h264(self, file_path: str) -> str:
         """Check if an MP4 file has H.264 video. If not (VP9/AV1), re-encode to H.264."""
