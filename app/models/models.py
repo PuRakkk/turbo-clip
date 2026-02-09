@@ -21,6 +21,7 @@ class User(Base):
     is_premium = Column(Boolean, default=False)
     is_admin = Column(Boolean, default=False)
     download_path = Column(String, nullable=True)
+    douyin_cookie = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

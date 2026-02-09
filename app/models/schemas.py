@@ -20,6 +20,7 @@ class UserResponse(UserBase):
     is_premium: bool = False
     is_admin: bool = False
     download_path: Optional[str] = None
+    has_douyin_cookie: bool = False
     created_at: datetime
 
     class Config:
@@ -27,6 +28,7 @@ class UserResponse(UserBase):
 
 class UserSettings(BaseModel):
     download_path: Optional[str] = None
+    douyin_cookie: Optional[str] = None
 
 class VideoFormat(BaseModel):
     format_code: str

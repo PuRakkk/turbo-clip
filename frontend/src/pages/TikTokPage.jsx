@@ -33,6 +33,19 @@ const PHASE_LABELS = {
   error: 'Failed',
 };
 
+/**
+ * Extract a TikTok or Douyin URL from share text.
+ * Users often paste the full share message (with Chinese text, hashtags, etc.)
+ * instead of just the URL.
+ */
+function extractUrl(text) {
+  if (!text) return '';
+  const match = text.match(
+    /https?:\/\/(?:(?:www\.|v\.|vm\.)?(?:tiktok\.com|douyin\.com)|vt\.tiktok\.com)\/[^\s\u4e00-\u9fff\uff00-\uffef]*/i
+  );
+  return match ? match[0].replace(/[,;!?）)》」』\]]+$/, '') : text.trim();
+}
+
 export default function TikTokPage() {
   const { user } = useAuth();
   const [url, setUrl] = useState('');
@@ -91,8 +104,10 @@ export default function TikTokPage() {
     e.preventDefault();
     resetResults();
     setLoading(true);
+    const cleanUrl = extractUrl(url);
+    if (cleanUrl !== url) setUrl(cleanUrl);
     try {
-      const res = await api.post('/tiktok/info', { url, limit: videoLimit, offset: 0 });
+      const res = await api.post('/tiktok/info', { url: cleanUrl, limit: videoLimit, offset: 0 });
       if (res.data.type === 'profile') {
         if (res.data.count === 0) {
           setError('No videos found on this profile');
@@ -402,8 +417,8 @@ export default function TikTokPage() {
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <div className="text-center mb-6 sm:mb-8">
-        <h1 className="text-3xl sm:text-4xl font-bold mb-2">TikTok</h1>
-        <p className="text-gray-400 text-sm sm:text-base">Download videos, audio, or batch download from any profile</p>
+        <h1 className="text-3xl sm:text-4xl font-bold mb-2">TikTok / Douyin</h1>
+        <p className="text-gray-400 text-sm sm:text-base">Download videos, audio, or batch download from TikTok & Douyin</p>
       </div>
 
       {/* URL Input */}
@@ -412,8 +427,16 @@ export default function TikTokPage() {
           type="text"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
+          onPaste={(e) => {
+            const pasted = e.clipboardData.getData('text');
+            const extracted = extractUrl(pasted);
+            if (extracted !== pasted.trim()) {
+              e.preventDefault();
+              setUrl(extracted);
+            }
+          }}
           required
-          placeholder="https://www.tiktok.com/@user/video/... or profile URL"
+          placeholder="TikTok or Douyin URL (paste share text directly)"
           className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition text-sm sm:text-base"
         />
         <button

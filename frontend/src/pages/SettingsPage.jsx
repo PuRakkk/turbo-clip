@@ -20,6 +20,7 @@ export default function SettingsPage() {
   const [fsApiSupported] = useState(() => supportsFileSystemAccess());
   const [mobile] = useState(() => isMobileDevice());
 
+
   useEffect(() => {
     if (fsApiSupported) {
       loadDirectoryHandle().then((handle) => {

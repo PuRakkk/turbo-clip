@@ -44,6 +44,73 @@ def _get_user_download_dir(db: Session, user_id: str) -> str:
     return settings.DOWNLOAD_DIR
 
 
+def _cleanup_files_by_id(download_dir: str, download_id: str):
+    """Remove all files belonging to a download_id from disk."""
+    import os
+    if not download_dir or not os.path.isdir(download_dir):
+        return
+    for f in os.listdir(download_dir):
+        if f.startswith(download_id):
+            path = os.path.join(download_dir, f)
+            try:
+                os.remove(path)
+                logger.info("Cleanup: removed %s", f)
+            except OSError:
+                pass
+
+
+def _cleanup_cancelled(download_dir, db, completed_ids=None, start_time=None):
+    """Clean up files after a cancelled or failed download.
+
+    - completed_ids: list of download_ids whose files+DB records should be removed
+    - start_time: scan for orphan files created after this timestamp (for single downloads)
+    """
+    import os
+    import re
+    import time as _time
+
+    if not download_dir or not os.path.isdir(download_dir):
+        return
+
+    # 1. Remove files & DB rows for known completed downloads (batch/slideshow)
+    if completed_ids:
+        for dl_id in completed_ids:
+            _cleanup_files_by_id(download_dir, dl_id)
+            try:
+                db.query(DownloadHistory).filter(DownloadHistory.id == dl_id).delete()
+            except Exception:
+                pass
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+
+    # 2. Remove orphan files created after start_time that have no DB record
+    if start_time:
+        uuid_re = re.compile(
+            r'^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'
+        )
+        for f in os.listdir(download_dir):
+            m = uuid_re.match(f)
+            if not m:
+                continue
+            path = os.path.join(download_dir, f)
+            if not os.path.isfile(path):
+                continue
+            try:
+                if os.path.getmtime(path) < start_time:
+                    continue
+            except OSError:
+                continue
+            file_id = m.group(1)
+            if not db.query(DownloadHistory).filter(DownloadHistory.id == file_id).first():
+                try:
+                    os.remove(path)
+                    logger.info("Cleanup orphan: %s", f)
+                except OSError:
+                    pass
+
+
 @router.post("/info")
 @limiter.limit("30/minute")
 def get_video_info(request: Request, body: DownloadRequest):
@@ -137,7 +204,10 @@ def _make_progress_callback(download_id: str):
 
 def _run_video_download(download_id: str, url: str, format: str, quality: str, user_id: str):
     """Background function that runs the video download and updates progress."""
+    import time as _time
     db = SessionLocal()
+    user_dir = _get_user_download_dir(db, user_id)
+    t_start = _time.time()
     try:
         progress_store.update(download_id, {
             "status": "downloading",
@@ -148,7 +218,6 @@ def _run_video_download(download_id: str, url: str, format: str, quality: str, u
         })
 
         callback = _make_progress_callback(download_id)
-        user_dir = _get_user_download_dir(db, user_id)
 
         result = youtube_service.download_video(
             url=url,
@@ -157,11 +226,6 @@ def _run_video_download(download_id: str, url: str, format: str, quality: str, u
             progress_callback=callback,
             download_dir=user_dir,
         )
-
-        # Override the download_id from youtube_service with ours
-        # (youtube_service generates its own uuid — we need to use ours for consistency)
-        # Actually, youtube_service uses its own id for the filename.
-        # We'll store its id and file_path as-is.
 
         history = DownloadHistory(
             id=result['download_id'],
@@ -194,13 +258,17 @@ def _run_video_download(download_id: str, url: str, format: str, quality: str, u
             "phase": "error",
             "error": str(e),
         })
+        _cleanup_cancelled(user_dir, db, start_time=t_start)
     finally:
         db.close()
 
 
 def _run_audio_download(download_id: str, url: str, user_id: str):
     """Background function that runs the audio download and updates progress."""
+    import time as _time
     db = SessionLocal()
+    user_dir = _get_user_download_dir(db, user_id)
+    t_start = _time.time()
     try:
         progress_store.update(download_id, {
             "status": "downloading",
@@ -212,6 +280,8 @@ def _run_audio_download(download_id: str, url: str, user_id: str):
 
         # For audio-only, progress is simpler: 0-90% download, 90-100% conversion
         def audio_callback(d):
+            if progress_store.is_cancelled(download_id):
+                raise Exception("Download cancelled by user")
             status_val = d.get("status", "")
             if status_val == "downloading":
                 total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
@@ -236,8 +306,6 @@ def _run_audio_download(download_id: str, url: str, user_id: str):
                     "speed": None,
                     "eta": None,
                 })
-
-        user_dir = _get_user_download_dir(db, user_id)
 
         result = youtube_service.download_audio_only(
             url=url,
@@ -277,6 +345,7 @@ def _run_audio_download(download_id: str, url: str, user_id: str):
             "phase": "error",
             "error": str(e),
         })
+        _cleanup_cancelled(user_dir, db, start_time=t_start)
     finally:
         db.close()
 
@@ -491,10 +560,13 @@ def proxy_image(
 
 def _run_batch_download(batch_id: str, video_urls: list, format: str, quality: str, user_id: str):
     """Background function that downloads multiple videos sequentially."""
+    import time as _time
     db = SessionLocal()
     total = len(video_urls)
     failed = []
     completed_downloads = []  # [{download_id, title}] — frontend uses these to fetch files
+    user_dir = _get_user_download_dir(db, user_id)
+    t_start = _time.time()
 
     progress_store.update(batch_id, {
         "status": "downloading",
@@ -505,8 +577,6 @@ def _run_batch_download(batch_id: str, video_urls: list, format: str, quality: s
         "failed": [],
         "completed_downloads": [],
     })
-
-    user_dir = _get_user_download_dir(db, user_id)
 
     try:
         for i, url in enumerate(video_urls):
@@ -587,15 +657,29 @@ def _run_batch_download(batch_id: str, video_urls: list, format: str, quality: s
                 "completed_downloads": completed_downloads,
             })
 
-        progress_store.update(batch_id, {
-            "status": "done",
-            "total": total,
-            "completed": total - len(failed),
-            "current_title": "",
-            "current_progress": 100,
-            "failed": failed,
-            "completed_downloads": completed_downloads,
-        })
+        # If cancelled mid-batch, clean up all already-completed files
+        if progress_store.is_cancelled(batch_id):
+            _cleanup_cancelled(user_dir, db,
+                               completed_ids=[dl['download_id'] for dl in completed_downloads],
+                               start_time=t_start)
+            progress_store.update(batch_id, {
+                "status": "error",
+                "total": total,
+                "completed": 0,
+                "error": "Download cancelled by user",
+                "failed": failed,
+                "completed_downloads": [],
+            })
+        else:
+            progress_store.update(batch_id, {
+                "status": "done",
+                "total": total,
+                "completed": total - len(failed),
+                "current_title": "",
+                "current_progress": 100,
+                "failed": failed,
+                "completed_downloads": completed_downloads,
+            })
 
     except Exception as e:
         logger.error("Batch download crashed: %s error=%s", batch_id, e)
@@ -606,6 +690,9 @@ def _run_batch_download(batch_id: str, video_urls: list, format: str, quality: s
             "error": str(e),
             "failed": failed,
         })
+        _cleanup_cancelled(user_dir, db,
+                           completed_ids=[dl['download_id'] for dl in completed_downloads],
+                           start_time=t_start)
     finally:
         db.close()
 

@@ -67,7 +67,14 @@ def delete_history_item(
     return {"message": "History item deleted"}
 
 
-@router.put("/settings", response_model=UserResponse)
+def _user_response(user: User) -> dict:
+    """Build a UserResponse dict with has_douyin_cookie computed."""
+    resp = UserResponse.model_validate(user).model_dump()
+    resp['has_douyin_cookie'] = bool(user.douyin_cookie and user.douyin_cookie.strip())
+    return resp
+
+
+@router.put("/settings")
 def update_user_settings(
     body: UserSettings,
     db: Session = Depends(get_db),
@@ -82,9 +89,11 @@ def update_user_settings(
 
     if body.download_path is not None:
         user.download_path = body.download_path[:500] if body.download_path else None
-    else:
-        user.download_path = None
+
+    if body.douyin_cookie is not None:
+        # Empty string = clear cookie, non-empty = save cookie
+        user.douyin_cookie = body.douyin_cookie.strip() if body.douyin_cookie.strip() else None
 
     db.commit()
     db.refresh(user)
-    return user
+    return _user_response(user)

@@ -31,6 +31,12 @@ def _check_premium(db: Session, user_id: str):
         )
 
 
+def _get_user_douyin_cookie(db: Session, user_id: str) -> str:
+    """Return the user's Douyin cookie string, or empty string."""
+    user = db.query(User).filter(User.id == user_id).first()
+    return (user.douyin_cookie or '') if user else ''
+
+
 def _get_user_download_dir(db: Session, user_id: str) -> str:
     """Return the user's custom download path if set, otherwise the default."""
     import os
@@ -42,6 +48,90 @@ def _get_user_download_dir(db: Session, user_id: str) -> str:
     return settings.DOWNLOAD_DIR
 
 
+def _douyin_cookie_hint(error: str) -> str:
+    """Translate Douyin-specific errors into user-friendly messages."""
+    err_lower = str(error).lower()
+    if ('douyin' in err_lower and ('video info' in err_lower or 'download url' in err_lower)):
+        return (
+            "Failed to fetch this Douyin video. "
+            "The video may be private, deleted, or region-restricted. "
+            "Please check the URL and try again."
+        )
+    if 'item_list not found' in err_lower or 'render_data' in err_lower:
+        return (
+            "Could not extract video data from Douyin. "
+            "The video may be private or the page structure has changed."
+        )
+    return str(error)
+
+
+def _cleanup_files_by_id(download_dir: str, download_id: str):
+    """Remove all files belonging to a download_id from disk."""
+    import os
+    if not download_dir or not os.path.isdir(download_dir):
+        return
+    for f in os.listdir(download_dir):
+        if f.startswith(download_id):
+            path = os.path.join(download_dir, f)
+            try:
+                os.remove(path)
+                logger.info("Cleanup: removed %s", f)
+            except OSError:
+                pass
+
+
+def _cleanup_cancelled(download_dir, db, completed_ids=None, start_time=None):
+    """Clean up files after a cancelled or failed download.
+
+    - completed_ids: list of download_ids whose files+DB records should be removed
+    - start_time: scan for orphan files created after this timestamp (for single downloads)
+    """
+    import os
+    import re
+    import time as _time
+
+    if not download_dir or not os.path.isdir(download_dir):
+        return
+
+    # 1. Remove files & DB rows for known completed downloads (batch/slideshow)
+    if completed_ids:
+        for dl_id in completed_ids:
+            _cleanup_files_by_id(download_dir, dl_id)
+            try:
+                db.query(DownloadHistory).filter(DownloadHistory.id == dl_id).delete()
+            except Exception:
+                pass
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+
+    # 2. Remove orphan files created after start_time that have no DB record
+    if start_time:
+        uuid_re = re.compile(
+            r'^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'
+        )
+        for f in os.listdir(download_dir):
+            m = uuid_re.match(f)
+            if not m:
+                continue
+            path = os.path.join(download_dir, f)
+            if not os.path.isfile(path):
+                continue
+            try:
+                if os.path.getmtime(path) < start_time:
+                    continue
+            except OSError:
+                continue
+            file_id = m.group(1)
+            if not db.query(DownloadHistory).filter(DownloadHistory.id == file_id).first():
+                try:
+                    os.remove(path)
+                    logger.info("Cleanup orphan: %s", f)
+                except OSError:
+                    pass
+
+
 # --- Smart unified info endpoint ---
 
 @router.post("/info")
@@ -49,12 +139,15 @@ def _get_user_download_dir(db: Session, user_id: str) -> str:
 def get_tiktok_info(
     request: Request,
     body: TikTokInfoRequest,
+    db: Session = Depends(get_db),
     user_id: str = Depends(auth_service.get_current_user),
 ):
     url = str(body.url)
+    user_cookie = _get_user_douyin_cookie(db, user_id)
     try:
         if tiktok_service.is_profile_url(url):
-            result = tiktok_service.get_profile_videos(url, limit=body.limit, offset=body.offset)
+            result = tiktok_service.get_profile_videos(url, limit=body.limit, offset=body.offset,
+                                                       user_cookie=user_cookie)
             videos = result["videos"]
             return {
                 "type": "profile",
@@ -64,14 +157,14 @@ def get_tiktok_info(
                 "offset": body.offset,
             }
         else:
-            info = tiktok_service.get_video_info(url)
+            info = tiktok_service.get_video_info(url, user_cookie=user_cookie)
             info_type = "slideshow" if info.get("is_slideshow") else "video"
             return {"type": info_type, "info": info}
     except Exception as e:
         logger.error("get_tiktok_info failed: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch TikTok info. Check the URL and try again."
+            detail=_douyin_cookie_hint(str(e)),
         )
 
 
@@ -107,7 +200,11 @@ def _make_tiktok_progress_callback(download_id: str):
 # --- Background download functions ---
 
 def _run_tiktok_video_download(download_id: str, url: str, user_id: str):
+    import time as _time
     db = SessionLocal()
+    user_dir = _get_user_download_dir(db, user_id)
+    user_cookie = _get_user_douyin_cookie(db, user_id)
+    t_start = _time.time()
     try:
         progress_store.update(download_id, {
             "status": "downloading", "progress": 0, "phase": "starting",
@@ -115,9 +212,9 @@ def _run_tiktok_video_download(download_id: str, url: str, user_id: str):
         })
 
         callback = _make_tiktok_progress_callback(download_id)
-        user_dir = _get_user_download_dir(db, user_id)
         result = tiktok_service.download_video(
             url=url, progress_callback=callback, download_dir=user_dir,
+            user_cookie=user_cookie,
         )
 
         history = DownloadHistory(
@@ -137,14 +234,20 @@ def _run_tiktok_video_download(download_id: str, url: str, user_id: str):
     except Exception as e:
         logger.error("TikTok download failed: id=%s error=%s", download_id, e)
         progress_store.update(download_id, {
-            "status": "error", "progress": 0, "phase": "error", "error": str(e),
+            "status": "error", "progress": 0, "phase": "error",
+            "error": _douyin_cookie_hint(str(e)),
         })
+        _cleanup_cancelled(user_dir, db, start_time=t_start)
     finally:
         db.close()
 
 
 def _run_tiktok_audio_download(download_id: str, url: str, user_id: str):
+    import time as _time
     db = SessionLocal()
+    user_dir = _get_user_download_dir(db, user_id)
+    user_cookie = _get_user_douyin_cookie(db, user_id)
+    t_start = _time.time()
     try:
         progress_store.update(download_id, {
             "status": "downloading", "progress": 0, "phase": "starting",
@@ -169,9 +272,9 @@ def _run_tiktok_audio_download(download_id: str, url: str, user_id: str):
                     "phase": "converting", "speed": None, "eta": None,
                 })
 
-        user_dir = _get_user_download_dir(db, user_id)
         result = tiktok_service.download_audio_only(
             url=url, format="mp3", progress_callback=audio_callback, download_dir=user_dir,
+            user_cookie=user_cookie,
         )
 
         history = DownloadHistory(
@@ -191,14 +294,20 @@ def _run_tiktok_audio_download(download_id: str, url: str, user_id: str):
     except Exception as e:
         logger.error("TikTok audio download failed: id=%s error=%s", download_id, e)
         progress_store.update(download_id, {
-            "status": "error", "progress": 0, "phase": "error", "error": str(e),
+            "status": "error", "progress": 0, "phase": "error",
+            "error": _douyin_cookie_hint(str(e)),
         })
+        _cleanup_cancelled(user_dir, db, start_time=t_start)
     finally:
         db.close()
 
 
 def _run_tiktok_slideshow_download(download_id: str, url: str, user_id: str):
+    import time as _time
     db = SessionLocal()
+    user_dir = _get_user_download_dir(db, user_id)
+    user_cookie = _get_user_douyin_cookie(db, user_id)
+    t_start = _time.time()
     try:
         progress_store.update(download_id, {
             "status": "downloading", "progress": 0, "phase": "starting",
@@ -227,9 +336,9 @@ def _run_tiktok_slideshow_download(download_id: str, url: str, user_id: str):
                     "speed": None, "eta": None,
                 })
 
-        user_dir = _get_user_download_dir(db, user_id)
         result = tiktok_service.download_slideshow(
             url=url, progress_callback=slideshow_callback, download_dir=user_dir,
+            user_cookie=user_cookie,
         )
 
         history = DownloadHistory(
@@ -249,14 +358,19 @@ def _run_tiktok_slideshow_download(download_id: str, url: str, user_id: str):
     except Exception as e:
         logger.error("TikTok slideshow download failed: id=%s error=%s", download_id, e)
         progress_store.update(download_id, {
-            "status": "error", "progress": 0, "phase": "error", "error": str(e),
+            "status": "error", "progress": 0, "phase": "error",
+            "error": _douyin_cookie_hint(str(e)),
         })
+        _cleanup_cancelled(user_dir, db, start_time=t_start)
     finally:
         db.close()
 
 
 def _run_tiktok_slideshow_images(download_id: str, image_urls: list, title: str, user_id: str):
+    import time as _time
     db = SessionLocal()
+    user_dir = _get_user_download_dir(db, user_id)
+    t_start = _time.time()
     completed_downloads = []
 
     try:
@@ -316,7 +430,6 @@ def _run_tiktok_slideshow_images(download_id: str, image_urls: list, title: str,
                     "total_count": total_img,
                 })
 
-        user_dir = _get_user_download_dir(db, user_id)
         result = tiktok_service.download_slideshow_images(
             image_urls=image_urls,
             title=title,
@@ -334,25 +447,31 @@ def _run_tiktok_slideshow_images(download_id: str, image_urls: list, title: str,
     except Exception as e:
         logger.error("TikTok slideshow images download failed: id=%s error=%s", download_id, e)
         progress_store.update(download_id, {
-            "status": "error", "progress": 0, "phase": "error", "error": str(e),
+            "status": "error", "progress": 0, "phase": "error",
+            "error": _douyin_cookie_hint(str(e)),
         })
+        _cleanup_cancelled(user_dir, db,
+                           completed_ids=[dl['download_id'] for dl in completed_downloads],
+                           start_time=t_start)
     finally:
         db.close()
 
 
 def _run_tiktok_batch_download(batch_id: str, video_urls: list, user_id: str):
+    import time as _time
     db = SessionLocal()
     total = len(video_urls)
     failed = []
     completed_downloads = []
+    user_dir = _get_user_download_dir(db, user_id)
+    user_cookie = _get_user_douyin_cookie(db, user_id)
+    t_start = _time.time()
 
     progress_store.update(batch_id, {
         "status": "downloading", "total": total, "completed": 0,
         "current_title": "", "current_progress": 0, "failed": [],
         "completed_downloads": [],
     })
-
-    user_dir = _get_user_download_dir(db, user_id)
 
     try:
         for i, url in enumerate(video_urls):
@@ -378,7 +497,7 @@ def _run_tiktok_batch_download(batch_id: str, video_urls: list, user_id: str):
             try:
                 # Detect slideshow vs video
                 try:
-                    info = tiktok_service.get_video_info(url)
+                    info = tiktok_service.get_video_info(url, user_cookie=user_cookie)
                     is_slideshow = info.get('is_slideshow', False)
                 except Exception:
                     is_slideshow = False
@@ -386,11 +505,13 @@ def _run_tiktok_batch_download(batch_id: str, video_urls: list, user_id: str):
                 if is_slideshow:
                     result = tiktok_service.download_slideshow(
                         url=url, progress_callback=make_video_callback(i), download_dir=user_dir,
+                        user_cookie=user_cookie,
                     )
                     fmt, quality_val = 'zip', 'slideshow'
                 else:
                     result = tiktok_service.download_video(
                         url=url, progress_callback=make_video_callback(i), download_dir=user_dir,
+                        user_cookie=user_cookie,
                     )
                     fmt, quality_val = 'mp4', 'best'
 
@@ -420,18 +541,32 @@ def _run_tiktok_batch_download(batch_id: str, video_urls: list, user_id: str):
                 "completed_downloads": completed_downloads,
             })
 
-        progress_store.update(batch_id, {
-            "status": "done", "total": total,
-            "completed": total - len(failed), "failed": failed,
-            "completed_downloads": completed_downloads,
-        })
+        # If cancelled mid-batch, clean up all already-completed files
+        if progress_store.is_cancelled(batch_id):
+            _cleanup_cancelled(user_dir, db,
+                               completed_ids=[dl['download_id'] for dl in completed_downloads],
+                               start_time=t_start)
+            progress_store.update(batch_id, {
+                "status": "error", "total": total,
+                "completed": 0, "error": "Download cancelled by user",
+                "failed": failed, "completed_downloads": [],
+            })
+        else:
+            progress_store.update(batch_id, {
+                "status": "done", "total": total,
+                "completed": total - len(failed), "failed": failed,
+                "completed_downloads": completed_downloads,
+            })
 
     except Exception as e:
         logger.error("TikTok batch crashed: %s error=%s", batch_id, e)
         progress_store.update(batch_id, {
             "status": "error", "total": total, "completed": 0,
-            "error": str(e), "failed": failed,
+            "error": _douyin_cookie_hint(str(e)), "failed": failed,
         })
+        _cleanup_cancelled(user_dir, db,
+                           completed_ids=[dl['download_id'] for dl in completed_downloads],
+                           start_time=t_start)
     finally:
         db.close()
 

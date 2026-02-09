@@ -10,7 +10,10 @@
       "WebFetch(domain:github.com)",
       "Bash(git -C \"d:/TurboClip\" log --oneline -20)",
       "Bash(node -e:*)",
-      "Bash(npx vite build:*)"
+      "Bash(npx vite build:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(.venv/Scripts/python:*)",
+      "Bash(tasklist:*)"
     ]
   }
 }
