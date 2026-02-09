@@ -14,6 +14,7 @@ from app.models.models import DownloadHistory, User
 from app.services.auth_service import AuthService
 from app.services.tiktok_service import TikTokService
 from app.services import progress_store
+from app.routes.user import trim_user_history
 
 logger = logging.getLogger("turboclip.tiktok.routes")
 router = APIRouter()
@@ -226,6 +227,7 @@ def _run_tiktok_video_download(download_id: str, url: str, user_id: str):
         )
         db.add(history)
         db.commit()
+        trim_user_history(db, user_id)
 
         progress_store.update(download_id, {
             "status": "done", "progress": 100, "phase": "done",
@@ -286,6 +288,7 @@ def _run_tiktok_audio_download(download_id: str, url: str, user_id: str):
         )
         db.add(history)
         db.commit()
+        trim_user_history(db, user_id)
 
         progress_store.update(download_id, {
             "status": "done", "progress": 100, "phase": "done",
@@ -350,6 +353,7 @@ def _run_tiktok_slideshow_download(download_id: str, url: str, user_id: str):
         )
         db.add(history)
         db.commit()
+        trim_user_history(db, user_id)
 
         progress_store.update(download_id, {
             "status": "done", "progress": 100, "phase": "done",
@@ -411,6 +415,7 @@ def _run_tiktok_slideshow_images(download_id: str, image_urls: list, title: str,
                 )
                 db.add(history)
                 db.commit()
+                trim_user_history(db, user_id)
 
                 completed_downloads.append({
                     "download_id": result['download_id'],
@@ -529,6 +534,7 @@ def _run_tiktok_batch_download(batch_id: str, video_urls: list, user_id: str):
                 )
                 db.add(history)
                 db.commit()
+                trim_user_history(db, user_id)
                 logger.info("TikTok batch %s: downloaded %d/%d - %s", batch_id, i + 1, total, result['title'])
 
             except Exception as e:

@@ -15,6 +15,7 @@ from app.models.models import DownloadHistory, User
 from app.services.auth_service import AuthService
 from app.services.youtube_service import YouTubeService
 from app.services import progress_store
+from app.routes.user import trim_user_history
 
 logger = logging.getLogger("turboclip.download")
 router = APIRouter()
@@ -241,6 +242,7 @@ def _run_video_download(download_id: str, url: str, format: str, quality: str, u
         )
         db.add(history)
         db.commit()
+        trim_user_history(db, user_id)
 
         progress_store.update(download_id, {
             "status": "done",
@@ -328,6 +330,7 @@ def _run_audio_download(download_id: str, url: str, user_id: str):
         )
         db.add(history)
         db.commit()
+        trim_user_history(db, user_id)
 
         progress_store.update(download_id, {
             "status": "done",
@@ -493,7 +496,6 @@ def get_downloaded_file(
             filename=filename,
             media_type=mime,
             content_disposition_type="attachment",
-            background=BackgroundTask(_cleanup_file, file_path),
         )
 
     # Look up the stored file path from download history
@@ -640,6 +642,7 @@ def _run_batch_download(batch_id: str, video_urls: list, format: str, quality: s
                 )
                 db.add(history)
                 db.commit()
+                trim_user_history(db, user_id)
                 logger.info("Batch %s: downloaded %d/%d - %s", batch_id, i + 1, total, result['title'])
 
             except Exception as e:

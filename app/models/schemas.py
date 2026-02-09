@@ -63,6 +63,7 @@ class DownloadResponse(BaseModel):
 
 class DownloadHistoryItem(BaseModel):
     id: str
+    video_url: Optional[str] = None
     video_title: str
     video_id: str
     format: str

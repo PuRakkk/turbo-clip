@@ -5,6 +5,7 @@ export default function HistoryPage() {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [copiedId, setCopiedId] = useState(null);
 
   useEffect(() => {
     fetchHistory();
@@ -30,12 +31,13 @@ export default function HistoryPage() {
     }
   }
 
-  async function handleDownload(id) {
+  async function handleDownload(item) {
+    setError('');
     try {
-      const res = await api.get(`/download/file/${id}`, { responseType: 'blob' });
+      const res = await api.get(`/download/file/${item.id}`, { responseType: 'blob' });
       const disposition = res.headers['content-disposition'] || '';
       const match = disposition.match(/filename="?(.+?)"?$/);
-      const filename = match ? match[1] : `download_${id}`;
+      const filename = match ? match[1] : `download_${item.id}`;
       const blobUrl = URL.createObjectURL(res.data);
       const a = document.createElement('a');
       a.href = blobUrl;
@@ -45,8 +47,22 @@ export default function HistoryPage() {
       document.body.removeChild(a);
       URL.revokeObjectURL(blobUrl);
     } catch {
-      setError('File no longer available. Please re-download from the source.');
+      // File no longer on server — copy URL so user can re-download
+      if (item.video_url && item.video_url !== 'slideshow_image') {
+        handleCopyUrl(item);
+        setError('File no longer on server. URL copied — paste it on the download page.');
+      } else {
+        setError('File no longer available.');
+      }
     }
+  }
+
+  function handleCopyUrl(item) {
+    if (!item.video_url || item.video_url === 'slideshow_image') return;
+    navigator.clipboard.writeText(item.video_url).then(() => {
+      setCopiedId(item.id);
+      setTimeout(() => setCopiedId(null), 2000);
+    });
   }
 
   function formatDate(dateStr) {
@@ -90,7 +106,6 @@ export default function HistoryPage() {
                 <tr className="border-b border-gray-800 text-left text-sm text-gray-400">
                   <th className="px-4 py-3">Title</th>
                   <th className="px-4 py-3">Format</th>
-                  <th className="px-4 py-3">Quality</th>
                   <th className="px-4 py-3">Size</th>
                   <th className="px-4 py-3">Date</th>
                   <th className="px-4 py-3"></th>
@@ -101,17 +116,24 @@ export default function HistoryPage() {
                   <tr key={item.id} className="border-b border-gray-800/50 hover:bg-gray-800/50 transition">
                     <td className="px-4 py-3 text-sm max-w-xs truncate">{item.video_title}</td>
                     <td className="px-4 py-3 text-sm text-gray-400 uppercase">{item.format}</td>
-                    <td className="px-4 py-3 text-sm text-gray-400">{item.quality}</td>
                     <td className="px-4 py-3 text-sm text-gray-400">{formatSize(item.file_size)}</td>
                     <td className="px-4 py-3 text-sm text-gray-400">{formatDate(item.downloaded_at)}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <button
-                          onClick={() => handleDownload(item.id)}
+                          onClick={() => handleDownload(item)}
                           className="text-blue-400 hover:text-blue-300 text-sm transition"
                         >
                           Download
                         </button>
+                        {item.video_url && item.video_url !== 'slideshow_image' && (
+                          <button
+                            onClick={() => handleCopyUrl(item)}
+                            className="text-gray-400 hover:text-gray-300 text-sm transition"
+                          >
+                            {copiedId === item.id ? 'Copied!' : 'Copy URL'}
+                          </button>
+                        )}
                         <button
                           onClick={() => handleDelete(item.id)}
                           className="text-red-400 hover:text-red-300 text-sm transition"
@@ -130,28 +152,33 @@ export default function HistoryPage() {
           <div className="sm:hidden space-y-3">
             {history.map((item) => (
               <div key={item.id} className="bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-2">
-                <div className="flex items-start justify-between gap-2">
-                  <h3 className="text-sm font-medium text-white line-clamp-2 flex-1">{item.video_title}</h3>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() => handleDownload(item.id)}
-                      className="text-blue-400 hover:text-blue-300 text-xs transition"
-                    >
-                      Download
-                    </button>
-                    <button
-                      onClick={() => handleDelete(item.id)}
-                      className="text-red-400 hover:text-red-300 text-xs transition"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
+                <h3 className="text-sm font-medium text-white line-clamp-2">{item.video_title}</h3>
                 <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-400">
                   <span className="uppercase">{item.format}</span>
-                  <span>{item.quality}</span>
                   <span>{formatSize(item.file_size)}</span>
                   <span>{formatDate(item.downloaded_at)}</span>
+                </div>
+                <div className="flex items-center gap-3 pt-1">
+                  <button
+                    onClick={() => handleDownload(item)}
+                    className="text-blue-400 hover:text-blue-300 text-xs font-medium transition"
+                  >
+                    Download
+                  </button>
+                  {item.video_url && item.video_url !== 'slideshow_image' && (
+                    <button
+                      onClick={() => handleCopyUrl(item)}
+                      className="text-gray-400 hover:text-gray-300 text-xs transition"
+                    >
+                      {copiedId === item.id ? 'Copied!' : 'Copy URL'}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleDelete(item.id)}
+                    className="text-red-400 hover:text-red-300 text-xs transition"
+                  >
+                    Delete
+                  </button>
                 </div>
               </div>
             ))}

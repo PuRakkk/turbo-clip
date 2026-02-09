@@ -39,7 +39,7 @@ const PLATFORMS = [
     ],
   },
   {
-    name: 'TikTok',
+    name: 'TikTok & Douyin',
     status: 'available',
     route: '/tiktok',
     color: 'cyan',
@@ -49,12 +49,14 @@ const PLATFORMS = [
       </svg>
     ),
     features: [
-      'Download TikTok videos in MP4',
+      'Download TikTok & Douyin videos in MP4',
       'Extract audio as MP3',
-      'Batch download from profiles',
-      'Custom download folder',
-      'Real-time download progress with speed and ETA',
-      'Files saved with original video title',
+      'Download slideshow images',
+      'Douyin support',
+      'Paste share text directly — URL auto-extracted',
+      'No-watermark Douyin downloads',
+      'Batch download from TikTok profiles',
+      'Real-time download progress',
     ],
   },
 ];

@@ -8,7 +8,6 @@ import ErrorBoundary from './components/ErrorBoundary';
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const RegisterPage = lazy(() => import('./pages/RegisterPage'));
 const DownloadPage = lazy(() => import('./pages/DownloadPage'));
-const HistoryPage = lazy(() => import('./pages/HistoryPage'));
 const SubscriptionPage = lazy(() => import('./pages/SubscriptionPage'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 const FeaturesPage = lazy(() => import('./pages/FeaturesPage'));
@@ -38,7 +37,6 @@ export default function App() {
                   <Route path="/register" element={<RegisterPage />} />
                   <Route path="/" element={<ProtectedRoute><DownloadPage /></ProtectedRoute>} />
                   <Route path="/tiktok" element={<ProtectedRoute><TikTokPage /></ProtectedRoute>} />
-                  <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
                   <Route path="/subscription" element={<ProtectedRoute><SubscriptionPage /></ProtectedRoute>} />
                   <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
                   <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
