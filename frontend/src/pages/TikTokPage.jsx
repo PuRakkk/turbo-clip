@@ -453,7 +453,7 @@ export default function TikTokPage() {
 
       {/* Error */}
       {error && (
-        <div className="bg-red-500/10 border border-red-500/50 text-red-400 px-4 py-3 rounded-lg text-sm">
+        <div className="bg-red-500/10 border border-red-500/50 text-red-400 px-3 sm:px-4 py-3 rounded-lg text-xs sm:text-sm wrap-break-word overflow-hidden">
           {error}
         </div>
       )}
@@ -462,12 +462,12 @@ export default function TikTokPage() {
 
       {/* Progress */}
       {progress && (
-        <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-3">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-300 font-medium">
+        <div className="bg-gray-900 rounded-xl border border-gray-800 p-3 sm:p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2 text-xs sm:text-sm">
+            <span className="text-gray-300 font-medium min-w-0 truncate">
               {PHASE_LABELS[progress.phase] || progress.phase}
             </span>
-            <span className="text-white font-semibold">{Math.round(progress.progress)}%</span>
+            <span className="text-white font-semibold shrink-0">{Math.round(progress.progress)}%</span>
           </div>
           <div className="w-full bg-gray-800 rounded-full h-3 overflow-hidden">
             <div
@@ -499,7 +499,7 @@ export default function TikTokPage() {
 
       {/* Success */}
       {message && (
-        <div className="bg-green-500/10 border border-green-500/50 text-green-400 px-4 py-3 rounded-lg text-sm">
+        <div className="bg-green-500/10 border border-green-500/50 text-green-400 px-3 sm:px-4 py-3 rounded-lg text-xs sm:text-sm wrap-break-word overflow-hidden">
           {message.text}
         </div>
       )}
@@ -739,16 +739,16 @@ export default function TikTokPage() {
 
       {/* Batch Progress */}
       {batchProgress && (
-        <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-3">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-300 font-medium">
+        <div className="bg-gray-900 rounded-xl border border-gray-800 p-3 sm:p-4 space-y-3 overflow-hidden">
+          <div className="flex items-center justify-between gap-2 text-xs sm:text-sm">
+            <span className="text-gray-300 font-medium min-w-0 truncate">
               {isBatchDone
                 ? 'Batch complete'
                 : batchProgress.current_title
                   ? `Downloading: ${batchProgress.current_title}`
                   : `Downloading ${batchProgress.completed + 1} of ${batchProgress.total}...`}
             </span>
-            <span className="text-white font-semibold">
+            <span className="text-white font-semibold shrink-0">
               {batchProgress.completed}/{batchProgress.total}
             </span>
           </div>
@@ -784,14 +784,14 @@ export default function TikTokPage() {
           {batchDownloading && (
             <button
               onClick={handleStop}
-              className="w-full bg-red-600 hover:bg-red-700 text-white py-2 rounded-lg text-sm font-semibold transition"
+              className="w-full bg-red-600 hover:bg-red-700 text-white py-2 rounded-lg text-xs sm:text-sm font-semibold transition"
             >
               Stop Batch Download
             </button>
           )}
 
           {isBatchDone && (
-            <div className="text-sm">
+            <div className="text-xs sm:text-sm">
               <span className="text-green-400">
                 Successfully downloaded {batchProgress.completed - failedCount} of {batchProgress.total} videos.
               </span>
@@ -799,12 +799,12 @@ export default function TikTokPage() {
           )}
 
           {failedCount > 0 && (
-            <div className="text-sm">
+            <div className="text-xs sm:text-sm overflow-hidden">
               <span className="text-red-400">{failedCount} failed:</span>
-              <ul className="mt-1 space-y-0.5">
+              <ul className="mt-1 space-y-1">
                 {batchProgress.failed.map((f, i) => (
                   <li key={i} className="text-xs text-red-300 truncate">
-                    {f.url} — {f.error}
+                    {f.error}
                   </li>
                 ))}
               </ul>
