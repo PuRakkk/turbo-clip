@@ -13,7 +13,12 @@
       "Bash(npx vite build:*)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(.venv/Scripts/python:*)",
-      "Bash(tasklist:*)"
+      "Bash(tasklist:*)",
+      "Bash(curl:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(cmd //c \"tasklist /FI \"\"PID eq 15696\"\" & echo --- & tasklist /FI \"\"PID eq 5328\"\"\")",
+      "Bash(wmic process where \"ProcessId=15696 or ProcessId=5328\" get Name,ProcessId,CommandLine)"
     ]
   }
 }

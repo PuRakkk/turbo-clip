@@ -8,7 +8,7 @@ pip install -r requirements.txt
 # (init_db() auto-creates tables on startup)
 
 # Run the backend
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --port 8008
 
 # Reload Backend
 uvicorn main:app --reload
