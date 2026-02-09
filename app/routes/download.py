@@ -400,6 +400,10 @@ def get_downloaded_file(
         '.mp3': 'audio/mpeg',
         '.m4a': 'audio/mp4',
         '.zip': 'application/zip',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.webp': 'image/webp',
     }
 
     def sanitize_filename(name: str) -> str:
@@ -436,7 +440,7 @@ def get_downloaded_file(
     # Fallback: scan default download dir
     from app.settings.config import settings
     download_dir = settings.DOWNLOAD_DIR
-    for ext in ['mp4', 'webm', 'mkv', 'mp3', 'm4a', 'zip']:
+    for ext in ['mp4', 'webm', 'mkv', 'mp3', 'm4a', 'zip', 'jpg', 'jpeg', 'png', 'webp']:
         file_path = os.path.join(download_dir, f"{download_id}.{ext}")
         if os.path.exists(file_path):
             return serve_file(file_path, f"{download_id}.{ext}")

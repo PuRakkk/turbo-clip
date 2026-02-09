@@ -42,6 +42,7 @@ export default function TikTokPage() {
   // Single video / slideshow state
   const [videoInfo, setVideoInfo] = useState(null);
   const [slideshowInfo, setSlideshowInfo] = useState(null);
+  const [selectedImageIds, setSelectedImageIds] = useState(new Set());
   const [downloading, setDownloading] = useState(false);
   const [message, setMessage] = useState(null);
   const [progress, setProgress] = useState(null);
@@ -65,9 +66,17 @@ export default function TikTokPage() {
     };
   }, []);
 
+  // Auto-select all slideshow images when info loads
+  useEffect(() => {
+    if (slideshowInfo?.image_urls?.length) {
+      setSelectedImageIds(new Set(slideshowInfo.image_urls.map((_, i) => i)));
+    }
+  }, [slideshowInfo]);
+
   function resetResults() {
     setVideoInfo(null);
     setSlideshowInfo(null);
+    setSelectedImageIds(new Set());
     setProfileVideos([]);
     setSelectedIds(new Set());
     setHasMore(false);
@@ -193,47 +202,82 @@ export default function TikTokPage() {
 
   async function handleDownloadSlideshow() {
     if (!slideshowInfo?.image_urls?.length) return;
+    const allUrls = slideshowInfo.image_urls;
+    const selectedIndices = [...selectedImageIds].sort((a, b) => a - b);
+    if (selectedIndices.length === 0) return;
+
     setDownloading(true);
     setError('');
     setMessage(null);
+    setProgress({ status: 'waiting', progress: 0, phase: 'starting' });
 
-    const urls = slideshowInfo.image_urls;
-    const safeName = (slideshowInfo.title || 'slideshow').replace(/[<>:"/\\|?*]/g, '').trim().substring(0, 50);
-    let failed = 0;
-
-    for (let i = 0; i < urls.length; i++) {
-      setProgress({
-        status: 'downloading',
-        progress: (i / urls.length) * 100,
-        phase: 'downloading_images',
+    try {
+      const selectedUrls = selectedIndices.map((i) => allUrls[i]);
+      const res = await api.post('/tiktok/slideshow/images', {
+        image_urls: selectedUrls,
+        title: slideshowInfo.title || 'TikTok Slideshow',
       });
+      activeDownloadId.current = res.data.download_id;
+      connectToSlideshowProgress(res.data.download_id);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to start slideshow download');
+      setDownloading(false);
+      setProgress(null);
+    }
+  }
 
-      try {
-        const res = await api.get('/download/proxy-image', {
-          params: { url: urls[i], filename: `${safeName}_${i + 1}.webp` },
-          responseType: 'blob',
-        });
-        const blobUrl = URL.createObjectURL(res.data);
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = `${safeName}_${i + 1}.webp`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(blobUrl);
-        if (i < urls.length - 1) await new Promise((r) => setTimeout(r, 500));
-      } catch {
-        failed++;
+  function connectToSlideshowProgress(downloadId) {
+    if (eventSourceRef.current) eventSourceRef.current.close();
+    deliveredIdsRef.current = new Set();
+    const es = new EventSource(`/api/tiktok/progress/${downloadId}`);
+    eventSourceRef.current = es;
+
+    es.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      setProgress(data);
+
+      // Deliver each completed image to the user's device via smartDownload
+      const downloads = data.completed_downloads || [];
+      for (const dl of downloads) {
+        if (dl.download_id && !deliveredIdsRef.current.has(dl.download_id)) {
+          deliveredIdsRef.current.add(dl.download_id);
+          smartDownload(dl.download_id, dl.title).catch((err) =>
+            console.warn('Slideshow smartDownload failed:', dl.title, err)
+          );
+        }
       }
-    }
 
-    setProgress(null);
-    setDownloading(false);
-    if (failed > 0) {
-      setError(`${failed} of ${urls.length} images failed to download`);
-    } else {
-      setMessage({ text: `${urls.length} images saved to your device` });
-    }
+      if (data.status === 'done') {
+        es.close();
+        eventSourceRef.current = null;
+        setDownloading(false);
+        const saved = data.saved_count || 0;
+        const total = data.total_count || 0;
+        const failed = total - saved;
+        if (failed > 0) {
+          setMessage({ text: `${saved} of ${total} images saved to your device` });
+        } else {
+          setMessage({ text: `${saved} images saved to your device` });
+        }
+        setTimeout(() => setProgress(null), 1500);
+      }
+
+      if (data.status === 'error') {
+        es.close();
+        eventSourceRef.current = null;
+        setDownloading(false);
+        setError(data.error || 'Slideshow download failed');
+        setProgress(null);
+      }
+    };
+
+    es.onerror = () => {
+      es.close();
+      eventSourceRef.current = null;
+      setDownloading(false);
+      setError('Lost connection to download progress');
+      setProgress(null);
+    };
   }
 
   async function handleStop() {
@@ -308,6 +352,29 @@ export default function TikTokPage() {
   }
 
   const selectedCount = selectedIds.size;
+
+  // --- Slideshow image selection ---
+  function toggleImageSelect(index) {
+    setSelectedImageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
+  function selectAllImages() {
+    if (slideshowInfo?.image_urls) {
+      setSelectedImageIds(new Set(slideshowInfo.image_urls.map((_, i) => i)));
+    }
+  }
+
+  function deselectAllImages() {
+    setSelectedImageIds(new Set());
+  }
+
+  const selectedImageCount = selectedImageIds.size;
+  const totalImageCount = slideshowInfo?.image_urls?.length || 0;
 
   async function handleDownloadAll() {
     const selected = profileVideos.filter((v) => selectedIds.has(v.video_id));
@@ -450,18 +517,83 @@ export default function TikTokPage() {
         <div className="space-y-4">
           <SlideshowCard info={slideshowInfo} isPremium={!!user?.is_premium} />
 
+          {/* Image selection grid */}
           <div className="bg-gray-900 rounded-xl p-4 sm:p-6 border border-gray-800 space-y-4">
-            <h3 className="text-lg font-semibold">Download Options</h3>
-            <p className="text-sm text-gray-400">
-              This is a slideshow post with {slideshowInfo.image_count} images.
-            </p>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold">
+                Select Images
+                {selectedImageCount < totalImageCount && (
+                  <span className="text-sm font-normal text-gray-400 ml-2">
+                    ({selectedImageCount} selected)
+                  </span>
+                )}
+              </h3>
+            </div>
+
+            {/* Select / Deselect controls */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={selectAllImages}
+                disabled={selectedImageCount === totalImageCount}
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-40 border border-gray-700 text-white text-xs px-3 py-1.5 rounded-lg transition"
+              >
+                Select All
+              </button>
+              <button
+                onClick={deselectAllImages}
+                disabled={selectedImageCount === 0}
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-40 border border-gray-700 text-white text-xs px-3 py-1.5 rounded-lg transition"
+              >
+                Deselect All
+              </button>
+              <span className="text-xs text-gray-500 ml-auto">
+                Click images to toggle selection
+              </span>
+            </div>
+
+            {/* Image grid */}
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 sm:gap-3 max-h-80 overflow-y-auto">
+              {(slideshowInfo.image_urls || []).map((imgUrl, i) => {
+                const isSelected = selectedImageIds.has(i);
+                return (
+                  <div
+                    key={i}
+                    className="group cursor-pointer"
+                    onClick={() => toggleImageSelect(i)}
+                  >
+                    <div className={`relative aspect-square rounded-lg overflow-hidden bg-gray-800 ring-2 transition ${isSelected ? 'ring-cyan-500' : 'ring-transparent opacity-50'}`}>
+                      <img
+                        src={imgUrl}
+                        alt={`Slide ${i + 1}`}
+                        loading="lazy"
+                        className="w-full h-full object-cover"
+                      />
+                      {/* Checkbox indicator */}
+                      <div className={`absolute top-1.5 left-1.5 w-5 h-5 rounded flex items-center justify-center text-xs font-bold transition ${isSelected ? 'bg-cyan-500 text-white' : 'bg-black/60 text-gray-400 border border-gray-500'}`}>
+                        {isSelected ? '\u2713' : ''}
+                      </div>
+                      {/* Image number */}
+                      <span className="absolute bottom-1 right-1 bg-black/80 text-white text-xs px-1.5 py-0.5 rounded">
+                        {i + 1}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Download buttons */}
             <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 pt-2">
               <button
                 onClick={handleDownloadSlideshow}
-                disabled={downloading}
+                disabled={downloading || selectedImageCount === 0}
                 className="flex-1 bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-800 text-white py-3 rounded-lg font-semibold transition"
               >
-                {downloading ? 'Downloading...' : `Download ${slideshowInfo.image_count} Images (ZIP)`}
+                {downloading
+                  ? 'Downloading...'
+                  : selectedImageCount === totalImageCount
+                    ? `Download All ${totalImageCount} Images`
+                    : `Download ${selectedImageCount} of ${totalImageCount} Images`}
               </button>
               <button
                 onClick={() => handleDownload('audio')}

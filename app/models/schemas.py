@@ -97,3 +97,7 @@ class BatchDownloadRequest(BaseModel):
     video_urls: List[str]
     format: str = "mp4"
     quality: str = "720p"
+
+class SlideshowDownloadRequest(BaseModel):
+    image_urls: List[str]
+    title: str = "TikTok Slideshow"

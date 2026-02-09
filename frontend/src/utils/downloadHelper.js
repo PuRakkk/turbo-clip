@@ -144,6 +144,9 @@ function parseFilenameFromResponse(response, suggestedName, downloadId) {
       'audio/mpeg': '.mp3',
       'audio/mp4': '.m4a',
       'application/zip': '.zip',
+      'image/jpeg': '.jpg',
+      'image/png': '.png',
+      'image/webp': '.webp',
     };
     const ext = extMap[ct] || '.mp4';
     if (safe && !safe.endsWith(ext)) return safe + ext;
@@ -158,6 +161,9 @@ function parseFilenameFromResponse(response, suggestedName, downloadId) {
     'audio/mpeg': '.mp3',
     'audio/mp4': '.m4a',
     'application/zip': '.zip',
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
   };
   const ext = extMap[ct] || '.mp4';
   return `${downloadId}${ext}`;

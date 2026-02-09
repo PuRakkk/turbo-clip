@@ -9,7 +9,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 from app.settings.database import get_db, SessionLocal
-from app.models.schemas import DownloadRequest, BatchDownloadRequest, TikTokInfoRequest
+from app.models.schemas import DownloadRequest, BatchDownloadRequest, TikTokInfoRequest, SlideshowDownloadRequest
 from app.models.models import DownloadHistory, User
 from app.services.auth_service import AuthService
 from app.services.tiktok_service import TikTokService
@@ -255,6 +255,91 @@ def _run_tiktok_slideshow_download(download_id: str, url: str, user_id: str):
         db.close()
 
 
+def _run_tiktok_slideshow_images(download_id: str, image_urls: list, title: str, user_id: str):
+    db = SessionLocal()
+    completed_downloads = []
+
+    try:
+        progress_store.update(download_id, {
+            "status": "downloading", "progress": 0, "phase": "downloading_images",
+            "speed": None, "eta": None,
+            "completed_downloads": [], "saved_count": 0, "total_count": len(image_urls),
+        })
+
+        def images_callback(d):
+            if progress_store.is_cancelled(download_id):
+                raise Exception("Download cancelled by user")
+            cb_status = d.get("status", "")
+            if cb_status == "downloading_image":
+                idx = d["image_index"]
+                total_img = d["image_total"]
+                pct = (idx / total_img) * 95
+                progress_store.update(download_id, {
+                    "status": "downloading",
+                    "progress": round(pct, 1),
+                    "phase": "downloading_images",
+                    "phase_detail": f"Image {idx + 1} of {total_img}",
+                    "speed": None, "eta": None,
+                    "completed_downloads": completed_downloads,
+                    "saved_count": len(completed_downloads),
+                    "total_count": total_img,
+                })
+            elif cb_status == "image_complete":
+                result = d["result"]
+                # Store in download history so /download/file/{id} can serve it
+                history = DownloadHistory(
+                    id=result['download_id'], user_id=user_id,
+                    video_url='slideshow_image', video_title=result['title'],
+                    video_id=f"slide_{d['image_index'] + 1}",
+                    format=result['format'], quality='slideshow',
+                    file_path=result['file_path'],
+                    file_size=result['file_size'], duration=0,
+                )
+                db.add(history)
+                db.commit()
+
+                completed_downloads.append({
+                    "download_id": result['download_id'],
+                    "title": result['title'],
+                })
+
+                idx = d["image_index"]
+                total_img = d["image_total"]
+                pct = ((idx + 1) / total_img) * 95
+                progress_store.update(download_id, {
+                    "status": "downloading",
+                    "progress": round(pct, 1),
+                    "phase": "downloading_images",
+                    "speed": None, "eta": None,
+                    "completed_downloads": completed_downloads,
+                    "saved_count": len(completed_downloads),
+                    "total_count": total_img,
+                })
+
+        user_dir = _get_user_download_dir(db, user_id)
+        result = tiktok_service.download_slideshow_images(
+            image_urls=image_urls,
+            title=title,
+            download_dir=user_dir,
+            progress_callback=images_callback,
+        )
+
+        progress_store.update(download_id, {
+            "status": "done", "progress": 100, "phase": "done",
+            "title": title,
+            "completed_downloads": completed_downloads,
+            "saved_count": result['saved_count'],
+            "total_count": result['total_count'],
+        })
+    except Exception as e:
+        logger.error("TikTok slideshow images download failed: id=%s error=%s", download_id, e)
+        progress_store.update(download_id, {
+            "status": "error", "progress": 0, "phase": "error", "error": str(e),
+        })
+    finally:
+        db.close()
+
+
 def _run_tiktok_batch_download(batch_id: str, video_urls: list, user_id: str):
     db = SessionLocal()
     total = len(video_urls)
@@ -419,6 +504,31 @@ def download_tiktok_slideshow(
     return {"download_id": download_id, "status": "started", "message": "TikTok slideshow download started"}
 
 
+@router.post("/slideshow/images")
+@limiter.limit("10/minute")
+def download_tiktok_slideshow_images(
+    request: Request,
+    body: SlideshowDownloadRequest,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(auth_service.get_current_user),
+):
+    _check_premium(db, user_id)
+
+    if not body.image_urls:
+        raise HTTPException(status_code=400, detail="No images to download")
+
+    download_id = str(uuid.uuid4())
+    logger.info("TikTok slideshow images download started: id=%s user=%s count=%d", download_id, user_id, len(body.image_urls))
+
+    thread = threading.Thread(
+        target=_run_tiktok_slideshow_images,
+        args=(download_id, body.image_urls, body.title, user_id),
+        daemon=True,
+    )
+    thread.start()
+    return {"download_id": download_id, "status": "started", "count": len(body.image_urls)}
+
+
 @router.post("/batch/download")
 @limiter.limit("3/minute")
 def tiktok_batch_download(
@@ -460,6 +570,11 @@ async def tiktok_download_progress(download_id: str):
                     "speed": data.get("speed"),
                     "eta": data.get("eta"),
                 }
+                # Relay slideshow image completions for smartDownload
+                if "completed_downloads" in data:
+                    event["completed_downloads"] = data["completed_downloads"]
+                    event["saved_count"] = data.get("saved_count", 0)
+                    event["total_count"] = data.get("total_count", 0)
                 if data.get("status") == "done":
                     event["title"] = data.get("title", "")
                     event["download_id"] = data.get("download_id", "")

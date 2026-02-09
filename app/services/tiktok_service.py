@@ -343,6 +343,94 @@ class TikTokService:
             except Exception:
                 pass
 
+    def download_slideshow_images(
+        self,
+        image_urls: list,
+        title: str = "TikTok Slideshow",
+        download_dir: Optional[str] = None,
+        progress_callback: Optional[callable] = None,
+    ) -> Dict:
+        """Download selected slideshow images individually, each with its own download_id."""
+        target_dir = download_dir or self.download_dir
+        os.makedirs(target_dir, exist_ok=True)
+
+        if not image_urls:
+            raise Exception("No image URLs provided.")
+
+        safe_title = self._sanitize_filename(title)
+        total = len(image_urls)
+        results = []
+
+        for i, img_url in enumerate(image_urls):
+            image_id = str(uuid.uuid4())
+
+            if progress_callback:
+                progress_callback({
+                    "status": "downloading_image",
+                    "image_index": i,
+                    "image_total": total,
+                })
+
+            # Determine extension from URL first (fallback)
+            ext = '.webp'
+            url_path = urlparse(img_url).path.lower()
+            for candidate in ('.jpg', '.jpeg', '.png', '.webp'):
+                if candidate in url_path:
+                    ext = candidate
+                    break
+
+            try:
+                req = urllib.request.Request(img_url, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                })
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    # Override extension based on actual content type
+                    content_type = resp.headers.get('Content-Type', '')
+                    if 'jpeg' in content_type or 'jpg' in content_type:
+                        ext = '.jpg'
+                    elif 'png' in content_type:
+                        ext = '.png'
+                    elif 'webp' in content_type:
+                        ext = '.webp'
+
+                    # Save with download_id as filename (for file-serving endpoint)
+                    file_path = os.path.join(target_dir, f"{image_id}{ext}")
+                    with open(file_path, 'wb') as f:
+                        f.write(resp.read())
+
+                file_size = os.path.getsize(file_path)
+                display_name = f"{safe_title}_{i + 1}{ext}"
+
+                result = {
+                    'download_id': image_id,
+                    'title': display_name,
+                    'file_path': file_path,
+                    'file_size': file_size,
+                    'format': ext.lstrip('.'),
+                }
+                results.append(result)
+                logger.info("Saved slideshow image %d/%d: %s -> %s", i + 1, total, display_name, image_id)
+
+                if progress_callback:
+                    progress_callback({
+                        "status": "image_complete",
+                        "image_index": i,
+                        "image_total": total,
+                        "result": result,
+                    })
+
+            except Exception as e:
+                logger.warning("Failed to download slideshow image %d/%d: %s", i + 1, total, e)
+
+        if not results:
+            raise Exception("Failed to download any images.")
+
+        return {
+            'results': results,
+            'saved_count': len(results),
+            'total_count': total,
+        }
+
     def get_profile_videos(self, profile_url: str, limit: int = 30, offset: int = 0) -> dict:
         ydl_opts = {
             'extract_flat': True,
