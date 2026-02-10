@@ -122,11 +122,13 @@ class TikTokService:
         'Version/16.0 Mobile/15E148 Safari/604.1'
     )
 
-    def _resolve_douyin_url(self, url: str) -> str:
-        """Follow redirects for Douyin short URLs (v.douyin.com) and return the final URL."""
+    def _resolve_short_url(self, url: str) -> str:
+        """Follow redirects for short URLs (v.douyin.com, vt.tiktok.com, vm.tiktok.com) and return the final URL."""
         import http.cookiejar
         parsed = urlparse(url)
-        if 'v.douyin.com' not in (parsed.hostname or ''):
+        host = parsed.hostname or ''
+        short_hosts = ('v.douyin.com', 'vt.tiktok.com', 'vm.tiktok.com')
+        if not any(h in host for h in short_hosts):
             return url
         try:
             cj = http.cookiejar.CookieJar()
@@ -136,11 +138,15 @@ class TikTokService:
             req = urllib.request.Request(url, headers={'User-Agent': self._DOUYIN_UA})
             resp = opener.open(req, timeout=10)
             final = resp.url
-            logger.info("Resolved Douyin short URL -> %s", final)
+            logger.info("Resolved short URL %s -> %s", url, final)
             return final
         except Exception as e:
-            logger.warning("Failed to resolve Douyin short URL: %s", e)
+            logger.warning("Failed to resolve short URL: %s", e)
             return url
+
+    def _resolve_douyin_url(self, url: str) -> str:
+        """Follow redirects for Douyin short URLs — delegates to _resolve_short_url."""
+        return self._resolve_short_url(url)
 
     @staticmethod
     def _extract_douyin_video_id(url: str) -> Optional[str]:
@@ -369,6 +375,9 @@ class TikTokService:
 
     def get_video_info(self, url: str, user_cookie: Optional[str] = None) -> Dict:
         url = self._extract_url_from_text(url)
+        # Resolve short URLs (vt.tiktok.com, vm.tiktok.com, v.douyin.com) first
+        url = self._resolve_short_url(url)
+
         cached = _info_cache.get(url)
         if cached and time.time() - cached["_ts"] < _INFO_CACHE_TTL:
             return cached["data"]
@@ -457,7 +466,7 @@ class TikTokService:
         download_dir: Optional[str] = None,
         user_cookie: Optional[str] = None,
     ) -> Dict:
-        url = self._normalize_tiktok_url(self._extract_url_from_text(url))
+        url = self._normalize_tiktok_url(self._resolve_short_url(self._extract_url_from_text(url)))
         download_id = str(uuid.uuid4())
         target_dir = download_dir or self.download_dir
         os.makedirs(target_dir, exist_ok=True)
@@ -560,7 +569,7 @@ class TikTokService:
         progress_callback: Optional[callable] = None,
         user_cookie: Optional[str] = None,
     ) -> Dict:
-        url = self._normalize_tiktok_url(self._extract_url_from_text(url))
+        url = self._normalize_tiktok_url(self._resolve_short_url(self._extract_url_from_text(url)))
         download_id = str(uuid.uuid4())
         target_dir = download_dir or self.download_dir
         os.makedirs(target_dir, exist_ok=True)
@@ -674,7 +683,7 @@ class TikTokService:
         progress_callback: Optional[callable] = None,
         user_cookie: Optional[str] = None,
     ) -> Dict:
-        url = self._normalize_tiktok_url(self._extract_url_from_text(url))
+        url = self._normalize_tiktok_url(self._resolve_short_url(self._extract_url_from_text(url)))
         download_id = str(uuid.uuid4())
         target_dir = download_dir or self.download_dir
         os.makedirs(target_dir, exist_ok=True)

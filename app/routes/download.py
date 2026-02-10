@@ -496,6 +496,7 @@ def get_downloaded_file(
             filename=filename,
             media_type=mime,
             content_disposition_type="attachment",
+            background=BackgroundTask(_cleanup_file, file_path),
         )
 
     # Look up the stored file path from download history
