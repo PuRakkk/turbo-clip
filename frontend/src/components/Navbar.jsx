@@ -5,6 +5,7 @@ import { useState, useRef, useEffect } from 'react';
 const DOWNLOAD_LINKS = [
   { to: '/', label: 'YouTube' },
   { to: '/tiktok', label: 'TikTok' },
+  { to: '/instagram', label: 'Instagram' },
 ];
 
 export default function Navbar() {

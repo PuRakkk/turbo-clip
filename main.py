@@ -13,6 +13,7 @@ from app.routes.download import router as download_router
 from app.routes.user import router as user_router
 from app.routes.admin import router as admin_router
 from app.routes.tiktok import router as tiktok_router
+from app.routes.instagram import router as instagram_router
 
 # --- Logging ---
 logging.basicConfig(
@@ -100,3 +101,4 @@ app.include_router(download_router, prefix="/api/download", tags=["Download"])
 app.include_router(user_router, prefix="/api/user", tags=["User"])
 app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
 app.include_router(tiktok_router, prefix="/api/tiktok", tags=["TikTok"])
+app.include_router(instagram_router, prefix="/api/instagram", tags=["Instagram"])

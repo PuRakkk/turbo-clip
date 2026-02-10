@@ -39,6 +39,8 @@ def init_db():
                 conn.execute(text("ALTER TABLE users ADD COLUMN is_premium BOOLEAN DEFAULT FALSE"))
             if "is_admin" not in columns:
                 conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE"))
+            if "instagram_cookie" not in columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN instagram_cookie VARCHAR"))
 
         if inspector.has_table("download_history"):
             columns = [col["name"] for col in inspector.get_columns("download_history")]

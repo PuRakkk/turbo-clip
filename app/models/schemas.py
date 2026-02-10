@@ -21,6 +21,7 @@ class UserResponse(UserBase):
     is_admin: bool = False
     download_path: Optional[str] = None
     has_douyin_cookie: bool = False
+    has_instagram_cookie: bool = False
     created_at: datetime
 
     class Config:
@@ -29,6 +30,7 @@ class UserResponse(UserBase):
 class UserSettings(BaseModel):
     download_path: Optional[str] = None
     douyin_cookie: Optional[str] = None
+    instagram_cookie: Optional[str] = None
 
 class VideoFormat(BaseModel):
     format_code: str
@@ -104,3 +106,12 @@ class BatchDownloadRequest(BaseModel):
 class SlideshowDownloadRequest(BaseModel):
     image_urls: List[str]
     title: str = "TikTok Slideshow"
+
+class InstagramInfoRequest(BaseModel):
+    url: HttpUrl
+    limit: int = 30
+    offset: int = 0
+
+class CarouselDownloadRequest(BaseModel):
+    media_items: List[dict]
+    title: str = "Instagram Post"

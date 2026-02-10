@@ -24,7 +24,8 @@ const PLATFORMS = [
   },
   {
     name: 'Instagram',
-    status: 'coming_soon',
+    status: 'available',
+    route: '/instagram',
     color: 'pink',
     icon: (
       <svg className="w-8 h-8" viewBox="0 0 24 24" fill="currentColor">
@@ -32,10 +33,12 @@ const PLATFORMS = [
       </svg>
     ),
     features: [
-      'Download Reels, Posts, and Stories',
-      'Save photos and carousels',
-      'Download profile pictures in full resolution',
+      'Download Reels and video posts in MP4',
+      'Extract audio as MP3',
+      'Save carousel posts (images + videos)',
       'Batch download from profiles',
+      'Cookie support for private content',
+      'Real-time download progress',
     ],
   },
   {

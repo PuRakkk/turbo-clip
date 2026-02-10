@@ -18,7 +18,8 @@
       "Bash(netstat:*)",
       "Bash(findstr:*)",
       "Bash(cmd //c \"tasklist /FI \"\"PID eq 15696\"\" & echo --- & tasklist /FI \"\"PID eq 5328\"\"\")",
-      "Bash(wmic process where \"ProcessId=15696 or ProcessId=5328\" get Name,ProcessId,CommandLine)"
+      "Bash(wmic process where \"ProcessId=15696 or ProcessId=5328\" get Name,ProcessId,CommandLine)",
+      "Bash(pip show:*)"
     ]
   }
 }

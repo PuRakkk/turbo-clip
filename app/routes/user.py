@@ -70,6 +70,7 @@ def _user_response(user: User) -> dict:
     """Build a UserResponse dict with has_douyin_cookie computed."""
     resp = UserResponse.model_validate(user).model_dump()
     resp['has_douyin_cookie'] = bool(user.douyin_cookie and user.douyin_cookie.strip())
+    resp['has_instagram_cookie'] = bool(user.instagram_cookie and user.instagram_cookie.strip())
     return resp
 
 
@@ -92,6 +93,9 @@ def update_user_settings(
     if body.douyin_cookie is not None:
         # Empty string = clear cookie, non-empty = save cookie
         user.douyin_cookie = body.douyin_cookie.strip() if body.douyin_cookie.strip() else None
+
+    if body.instagram_cookie is not None:
+        user.instagram_cookie = body.instagram_cookie.strip() if body.instagram_cookie.strip() else None
 
     db.commit()
     db.refresh(user)

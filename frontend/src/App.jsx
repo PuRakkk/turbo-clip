@@ -12,6 +12,7 @@ const SubscriptionPage = lazy(() => import('./pages/SubscriptionPage'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 const FeaturesPage = lazy(() => import('./pages/FeaturesPage'));
 const TikTokPage = lazy(() => import('./pages/TikTokPage'));
+const InstagramPage = lazy(() => import('./pages/InstagramPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 
 function PageLoader() {
@@ -37,6 +38,7 @@ export default function App() {
                   <Route path="/register" element={<RegisterPage />} />
                   <Route path="/" element={<ProtectedRoute><DownloadPage /></ProtectedRoute>} />
                   <Route path="/tiktok" element={<ProtectedRoute><TikTokPage /></ProtectedRoute>} />
+                  <Route path="/instagram" element={<ProtectedRoute><InstagramPage /></ProtectedRoute>} />
                   <Route path="/subscription" element={<ProtectedRoute><SubscriptionPage /></ProtectedRoute>} />
                   <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
                   <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
